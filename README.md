@@ -5,7 +5,7 @@
 &gt; narrative chapter progression.
 
 ## Live Demo
-🔗 [https://yourusername.github.io/the-lighthouse/](https://yourusername.github.io/the-lighthouse/)
+🔗 [https://the-lighthouse-an-interactive-storm.vercel.app/](https://the-lighthouse-an-interactive-storm.vercel.app/)
 
 ## Experience
 Scroll through five chapters of an interactive storm narrative:
