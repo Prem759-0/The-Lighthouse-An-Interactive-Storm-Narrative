@@ -20,7 +20,6 @@ Scroll through five chapters of an interactive storm narrative:
 ### Wave Physics
 5-octave sine wave synthesis with storm intensity multipliers:
 ```javascript
-y = Σ sin(x * freq_i + phase_i + time * speed_i) * amp_i * stormMult
 Sky Gradient → Stars/Rain → Lightning → Ocean Waves → Boat → 
 Lighthouse Structure → Volumetric Beam → Foreground Overlay → Vignette
 
