@@ -1,0 +1,630 @@
+   /**
+         * THE LIGHTHOUSE — INTERACTIVE STORM NARRATIVE
+         * =============================================
+         * A scroll-driven canvas experience featuring multi-octave wave physics,
+         * volumetric lighthouse beam rendering, particle weather systems, and
+         * narrative chapter progression via Intersection Observer.
+         * 
+         * Architecture:
+         * - WaveEngine:    5-octave sine synthesis for ocean surface
+         * - LightEngine:   Rotating beam with radial gradient volumetrics
+         * - ParticleEngine: Rain, spray, stars with wind influence
+         * - StoryEngine:   Scroll progress + Intersection Observer chapters
+         * - Renderer:      Layered composite canvas rendering
+         */
+
+        // ==================== CONFIGURATION ====================
+        const CONFIG = {
+            waveLayers: 5,
+            baseWaveAmp: 15,
+            baseWaveFreq: 0.008,
+            lighthouseX: 0.5, // normalized
+            lighthouseY: 0.62,
+            beamLength: 400,
+            beamSpeed: 0.008,
+            rainCount: 300,
+            starCount: 150,
+            sprayCount: 80,
+            lightningChance: 0.003,
+            skyTransitionSpeed: 0.02,
+            parallaxStrength: 0.04
+        };
+
+        // ==================== VECTOR2 ====================
+        class Vec2 {
+            constructor(x = 0, y = 0) { this.x = x; this.y = y; }
+            add(v) { return new Vec2(this.x + v.x, this.y + v.y); }
+            sub(v) { return new Vec2(this.x - v.x, this.y - v.y); }
+            scale(s) { return new Vec2(this.x * s, this.y * s); }
+        }
+
+        // ==================== WAVE ENGINE ====================
+        class WaveLayer {
+            constructor(index, total) {
+                this.index = index;
+                this.phase = Math.random() * Math.PI * 2;
+                this.freq = CONFIG.baseWaveFreq * (1 + index * 0.6);
+                this.amp = CONFIG.baseWaveAmp * (1 + index * 0.4);
+                this.speed = 0.3 + index * 0.15;
+                this.colorOffset = index * 15;
+            }
+
+            getY(x, time, stormIntensity) {
+                const stormMult = 1 + stormIntensity * (2 + this.index * 0.8);
+                return Math.sin(x * this.freq + this.phase + time * this.speed) * this.amp * stormMult;
+            }
+        }
+
+        class WaveEngine {
+            constructor() {
+                this.layers = [];
+                for (let i = 0; i < CONFIG.waveLayers; i++) {
+                    this.layers.push(new WaveLayer(i, CONFIG.waveLayers));
+                }
+            }
+
+            getSurfaceY(x, time, stormIntensity) {
+                let y = 0;
+                for (const layer of this.layers) {
+                    y += layer.getY(x, time, stormIntensity);
+                }
+                return y;
+            }
+
+            draw(ctx, width, height, time, stormIntensity, horizonY) {
+                const colors = [
+                    { r: 2, g: 12, b: 28 },
+                    { r: 5, g: 22, b: 45 },
+                    { r: 8, g: 32, b: 62 },
+                    { r: 12, g: 42, b: 78 },
+                    { r: 18, g: 55, b: 95 }
+                ];
+
+                for (let i = this.layers.length - 1; i >= 0; i--) {
+                    const layer = this.layers[i];
+                    ctx.beginPath();
+                    ctx.moveTo(0, height);
+
+                    for (let x = 0; x <= width; x += 3) {
+                        const y = horizonY + layer.getY(x, time, stormIntensity);
+                        ctx.lineTo(x, y);
+                    }
+
+                    ctx.lineTo(width, height);
+                    ctx.closePath();
+
+                    const c = colors[i];
+                    const stormDarken = stormIntensity * 0.3;
+                    ctx.fillStyle = `rgb(${c.r}, ${c.g}, ${c.b})`;
+                    ctx.fill();
+
+                    // Highlight crests
+                    if (i >= 3) {
+                        ctx.strokeStyle = `rgba(200, 230, 255, ${0.03 + stormIntensity * 0.08})`;
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        // ==================== LIGHT ENGINE ====================
+        class LightEngine {
+            constructor() {
+                this.angle = 0;
+                this.beamWidth = 0.25; // radians
+            }
+
+            update(dt) {
+                this.angle += CONFIG.beamSpeed;
+            }
+
+            draw(ctx, x, y, stormIntensity) {
+                const beamLen = CONFIG.beamLength * (1 + stormIntensity * 0.3);
+                const opacity = 0.15 + stormIntensity * 0.1;
+
+                // Main beam cone
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(this.angle);
+
+                // Volumetric beam
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, beamLen);
+                grad.addColorStop(0, `rgba(251, 191, 36, ${opacity})`);
+                grad.addColorStop(0.3, `rgba(251, 191, 36, ${opacity * 0.5})`);
+                grad.addColorStop(1, 'rgba(251, 191, 36, 0)');
+
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.arc(0, 0, beamLen, -this.beamWidth/2, this.beamWidth/2);
+                ctx.closePath();
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                // Core beam line
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(beamLen, 0);
+                ctx.strokeStyle = `rgba(255, 255, 220, ${0.3 + stormIntensity * 0.2})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.restore();
+
+                // Lighthouse glow
+                const glow = ctx.createRadialGradient(x, y, 0, x, y, 60);
+                glow.addColorStop(0, `rgba(251, 191, 36, ${0.4 + stormIntensity * 0.2})`);
+                glow.addColorStop(1, 'rgba(251, 191, 36, 0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(x, y, 60, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawStructure(ctx, x, y, stormIntensity) {
+                const w = 24;
+                const h = 80;
+
+                // Tower
+                ctx.fillStyle = `rgb(${30 - stormIntensity * 15}, ${35 - stormIntensity * 15}, ${45 - stormIntensity * 15})`;
+                ctx.fillRect(x - w/2, y - h, w, h);
+
+                // Stripes
+                ctx.fillStyle = `rgb(${50 - stormIntensity * 20}, ${55 - stormIntensity * 20}, ${65 - stormIntensity * 20})`;
+                ctx.fillRect(x - w/2, y - h + 15, w, 8);
+                ctx.fillRect(x - w/2, y - h + 40, w, 8);
+
+                // Lantern room
+                ctx.fillStyle = `rgba(251, 191, 36, ${0.6 + stormIntensity * 0.3})`;
+                ctx.fillRect(x - 10, y - h - 12, 20, 14);
+
+                // Roof
+                ctx.beginPath();
+                ctx.moveTo(x - 14, y - h - 12);
+                ctx.lineTo(x, y - h - 22);
+                ctx.lineTo(x + 14, y - h - 12);
+                ctx.closePath();
+                ctx.fillStyle = `rgb(${40 - stormIntensity * 15}, ${40 - stormIntensity * 15}, ${50 - stormIntensity * 15})`;
+                ctx.fill();
+            }
+        }
+
+        // ==================== PARTICLE ENGINE ====================
+        class Particle {
+            constructor(type, width, height) {
+                this.type = type; // 'rain', 'spray', 'star'
+                this.reset(width, height);
+            }
+
+            reset(width, height) {
+                if (this.type === 'star') {
+                    this.x = Math.random() * width;
+                    this.y = Math.random() * height * 0.6;
+                    this.size = Math.random() * 1.5 + 0.5;
+                    this.blinkSpeed = Math.random() * 0.02 + 0.005;
+                    this.blinkPhase = Math.random() * Math.PI * 2;
+                    this.vx = 0;
+                    this.vy = 0;
+                } else if (this.type === 'rain') {
+                    this.x = Math.random() * width;
+                    this.y = Math.random() * height * 0.5 - height * 0.5;
+                    this.vx = 0;
+                    this.vy = Math.random() * 8 + 12;
+                    this.len = Math.random() * 15 + 10;
+                } else if (this.type === 'spray') {
+                    this.x = Math.random() * width;
+                    this.y = height * 0.65 + Math.random() * 20;
+                    this.vx = (Math.random() - 0.5) * 3;
+                    this.vy = -Math.random() * 4 - 2;
+                    this.life = 1;
+                    this.decay = Math.random() * 0.02 + 0.01;
+                }
+            }
+
+            update(width, height, stormIntensity, windX) {
+                if (this.type === 'star') {
+                    this.blinkPhase += this.blinkSpeed;
+                    // Stars fade during storm
+                    this.alpha = (0.5 + Math.sin(this.blinkPhase) * 0.5) * (1 - stormIntensity * 0.9);
+                } else if (this.type === 'rain') {
+                    this.vx = windX * (0.5 + stormIntensity * 2);
+                    this.x += this.vx;
+                    this.y += this.vy * (0.5 + stormIntensity);
+                    if (this.y > height * 0.7) {
+                        this.reset(width, height);
+                        this.y = -this.len;
+                    }
+                    if (this.x > width) this.x = 0;
+                    if (this.x < 0) this.x = width;
+                } else if (this.type === 'spray') {
+                    this.x += this.vx + windX;
+                    this.y += this.vy;
+                    this.life -= this.decay;
+                    if (this.life <= 0) {
+                        this.reset(width, height);
+                    }
+                }
+            }
+
+            draw(ctx) {
+                if (this.type === 'star' && this.alpha > 0.01) {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (this.type === 'rain') {
+                    ctx.strokeStyle = 'rgba(180, 200, 220, 0.4)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(this.x - this.vx * 0.5, this.y - this.len);
+                    ctx.stroke();
+                } else if (this.type === 'spray') {
+                    ctx.fillStyle = `rgba(200, 220, 240, ${this.life * 0.3})`;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, 1.5 * this.life, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        class ParticleEngine {
+            constructor(width, height) {
+                this.stars = [];
+                this.rain = [];
+                this.spray = [];
+
+                for (let i = 0; i < CONFIG.starCount; i++) {
+                    this.stars.push(new Particle('star', width, height));
+                }
+                for (let i = 0; i < CONFIG.rainCount; i++) {
+                    this.rain.push(new Particle('rain', width, height));
+                }
+                for (let i = 0; i < CONFIG.sprayCount; i++) {
+                    this.spray.push(new Particle('spray', width, height));
+                }
+            }
+
+            update(width, height, stormIntensity, windX) {
+                for (const p of this.stars) p.update(width, height, stormIntensity, windX);
+                if (stormIntensity > 0.1) {
+                    for (const p of this.rain) p.update(width, height, stormIntensity, windX);
+                    for (const p of this.spray) p.update(width, height, stormIntensity, windX);
+                }
+            }
+
+            draw(ctx, stormIntensity) {
+                for (const p of this.stars) p.draw(ctx);
+                if (stormIntensity > 0.1) {
+                    for (const p of this.rain) p.draw(ctx);
+                    for (const p of this.spray) p.draw(ctx);
+                }
+            }
+        }
+
+        // ==================== LIGHTNING ====================
+        class Lightning {
+            constructor() {
+                this.active = false;
+                this.opacity = 0;
+                this.flashDuration = 0;
+                this.bolts = [];
+            }
+
+            trigger(width) {
+                this.active = true;
+                this.opacity = 0.8 + Math.random() * 0.2;
+                this.flashDuration = 8 + Math.random() * 12;
+                this.bolts = [];
+
+                // Generate bolt segments
+                let x = Math.random() * width;
+                let y = 0;
+                while (y < window.innerHeight * 0.6) {
+                    this.bolts.push({ x, y });
+                    x += (Math.random() - 0.5) * 60;
+                    y += Math.random() * 40 + 20;
+                }
+            }
+
+            update(stormIntensity) {
+                if (this.active) {
+                    this.flashDuration--;
+                    this.opacity *= 0.85;
+                    if (this.flashDuration <= 0 || this.opacity < 0.01) {
+                        this.active = false;
+                        this.opacity = 0;
+                    }
+                } else if (Math.random() < CONFIG.lightningChance * stormIntensity) {
+                    this.trigger(window.innerWidth);
+                }
+            }
+
+            draw(ctx, width, height) {
+                if (!this.active) return;
+
+                // Screen flash
+                ctx.fillStyle = `rgba(240, 248, 255, ${this.opacity * 0.15})`;
+                ctx.fillRect(0, 0, width, height);
+
+                // Bolt
+                if (this.bolts.length > 1) {
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${this.opacity})`;
+                    ctx.lineWidth = 2;
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = 'rgba(200, 220, 255, 0.8)';
+                    ctx.beginPath();
+                    ctx.moveTo(this.bolts[0].x, this.bolts[0].y);
+                    for (let i = 1; i < this.bolts.length; i++) {
+                        ctx.lineTo(this.bolts[i].x, this.bolts[i].y);
+                    }
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                }
+            }
+        }
+
+        // ==================== SKY ====================
+        class SkyEngine {
+            constructor() {
+                this.stormIntensity = 0;
+                this.time = 0;
+            }
+
+            getColor(stormIntensity) {
+                // Interpolate between clear night and storm
+                const clear = { r: 3, g: 6, b: 18 };
+                const storm = { r: 8, g: 8, b: 12 };
+                const dawn = { r: 25, g: 30, b: 45 };
+
+                let target;
+                if (stormIntensity < 0) {
+                    // Dawn (negative intensity used for ending)
+                    const t = Math.abs(stormIntensity);
+                    target = {
+                        r: storm.r + (dawn.r - storm.r) * t,
+                        g: storm.g + (dawn.g - storm.g) * t,
+                        b: storm.b + (dawn.b - storm.b) * t
+                    };
+                } else {
+                    target = {
+                        r: clear.r + (storm.r - clear.r) * stormIntensity,
+                        g: clear.g + (storm.g - clear.g) * stormIntensity,
+                        b: clear.b + (storm.b - clear.b) * stormIntensity
+                    };
+                }
+
+                return `rgb(${Math.floor(target.r)}, ${Math.floor(target.g)}, ${Math.floor(target.b)})`;
+            }
+
+            draw(ctx, width, height, stormIntensity) {
+                const grad = ctx.createLinearGradient(0, 0, 0, height);
+                const base = this.getColor(stormIntensity);
+                grad.addColorStop(0, base);
+                grad.addColorStop(1, `rgba(2, 4, 10, 1)`);
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, width, height);
+            }
+        }
+
+        // ==================== STORY ENGINE ====================
+        class StoryEngine {
+            constructor() {
+                this.progress = 0;
+                this.chapters = [];
+                this.currentChapter = 0;
+                this.stormIntensity = 0;
+                this.windX = 0;
+
+                // Chapter definitions: [scrollStart, scrollEnd, stormTarget, windTarget, name]
+                this.chapterData = [
+                    { start: 0, end: 0.15, storm: 0, wind: 0, name: 'Clear' },
+                    { start: 0.15, end: 0.35, storm: 0.3, wind: 1, name: 'Wind Rising' },
+                    { start: 0.35, end: 0.55, storm: 1.0, wind: 4, name: 'Storm' },
+                    { start: 0.55, end: 0.75, storm: 0.6, wind: 2, name: 'The Eye' },
+                    { start: 0.75, end: 1.0, storm: -0.3, wind: 0.5, name: 'Dawn' }
+                ];
+
+                this.setupObserver();
+            }
+
+            setupObserver() {
+                const observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            entry.target.classList.add('visible');
+                        }
+                    });
+                }, { threshold: 0.4 });
+
+                document.querySelectorAll('.chapter').forEach(ch => observer.observe(ch));
+            }
+
+            update() {
+                const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+                this.progress = Math.min(1, window.scrollY / docHeight);
+
+                // Find current chapter and interpolate storm/wind
+                for (let i = 0; i < this.chapterData.length; i++) {
+                    const ch = this.chapterData[i];
+                    if (this.progress >= ch.start && this.progress <= ch.end) {
+                        const localProgress = (this.progress - ch.start) / (ch.end - ch.start);
+                        const nextCh = this.chapterData[Math.min(i + 1, this.chapterData.length - 1)];
+
+                        this.stormIntensity = ch.storm + (nextCh.storm - ch.storm) * localProgress;
+                        this.windX = ch.wind + (nextCh.wind - ch.wind) * localProgress;
+
+                        document.getElementById('weatherValue').textContent = ch.name;
+                        break;
+                    }
+                }
+
+                document.getElementById('progressFill').style.width = (this.progress * 100) + '%';
+            }
+        }
+
+        // ==================== BOAT ====================
+        class Boat {
+            constructor() {
+                this.x = 0.2;
+                this.bobPhase = 0;
+            }
+
+            draw(ctx, width, height, time, waveEngine, stormIntensity, horizonY) {
+                const x = width * this.x;
+                const surfaceY = horizonY + waveEngine.getSurfaceY(x, time, stormIntensity);
+                this.bobPhase += 0.03;
+                const bob = Math.sin(this.bobPhase) * (5 + stormIntensity * 10);
+                const rock = Math.sin(this.bobPhase * 0.7) * (0.05 + stormIntensity * 0.15);
+                const y = surfaceY + bob;
+
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(rock);
+
+                // Hull
+                ctx.fillStyle = `rgb(${25 - stormIntensity * 10}, ${28 - stormIntensity * 10}, ${35 - stormIntensity * 10})`;
+                ctx.beginPath();
+                ctx.moveTo(-20, 0);
+                ctx.lineTo(20, 0);
+                ctx.lineTo(15, 10);
+                ctx.lineTo(-15, 10);
+                ctx.closePath();
+                ctx.fill();
+
+                // Mast
+                ctx.strokeStyle = `rgb(${40 - stormIntensity * 15}, ${42 - stormIntensity * 15}, ${50 - stormIntensity * 15})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(0, -25);
+                ctx.stroke();
+
+                // Sail
+                ctx.fillStyle = `rgba(220, 230, 240, ${0.3 - stormIntensity * 0.15})`;
+                ctx.beginPath();
+                ctx.moveTo(2, -3);
+                ctx.lineTo(2, -22);
+                ctx.lineTo(16, -5);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        // ==================== APPLICATION ====================
+        class App {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+
+                this.waveEngine = new WaveEngine();
+                this.lightEngine = new LightEngine();
+                this.particleEngine = null;
+                this.lightning = new Lightning();
+                this.skyEngine = new SkyEngine();
+                this.storyEngine = new StoryEngine();
+                this.boat = new Boat();
+
+                this.time = 0;
+                this.mouseX = 0;
+                this.mouseY = 0;
+
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+                window.addEventListener('mousemove', (e) => {
+                    this.mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+                    this.mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+                });
+
+                this.particleEngine = new ParticleEngine(this.canvas.width, this.canvas.height);
+                this.loop();
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                if (this.particleEngine) {
+                    // Re-init particles for new dimensions
+                    this.particleEngine = new ParticleEngine(this.canvas.width, this.canvas.height);
+                }
+            }
+
+            loop() {
+                requestAnimationFrame(() => this.loop());
+
+                this.time += 0.016;
+                this.storyEngine.update();
+                this.lightEngine.update(0.016);
+                this.lightning.update(Math.max(0, this.storyEngine.stormIntensity));
+
+                const ctx = this.ctx;
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+                const storm = this.storyEngine.stormIntensity;
+                const wind = this.storyEngine.windX;
+                const horizon = h * 0.62;
+
+                // Parallax offset
+                const parallaxX = this.mouseX * CONFIG.parallaxStrength * w;
+
+                ctx.clearRect(0, 0, w, h);
+
+                // Sky
+                ctx.save();
+                ctx.translate(parallaxX * 0.2, 0);
+                this.skyEngine.draw(ctx, w, h, storm);
+                ctx.restore();
+
+                // Stars / Rain
+                ctx.save();
+                ctx.translate(parallaxX * 0.1, 0);
+                this.particleEngine.update(w, h, storm, wind);
+                this.particleEngine.draw(ctx, storm);
+                ctx.restore();
+
+                // Lightning
+                this.lightning.draw(ctx, w, h);
+
+                // Ocean (back layers)
+                ctx.save();
+                ctx.translate(parallaxX * 0.5, 0);
+                this.waveEngine.draw(ctx, w, h, this.time, storm, horizon);
+                ctx.restore();
+
+                // Boat
+                ctx.save();
+                ctx.translate(parallaxX * 0.5, 0);
+                this.boat.draw(ctx, w, h, this.time, this.waveEngine, storm, horizon);
+                ctx.restore();
+
+                // Lighthouse structure
+                const lx = w * CONFIG.lighthouseX + parallaxX * 0.3;
+                const ly = h * CONFIG.lighthouseY;
+                this.lightEngine.drawStructure(ctx, lx, ly, storm);
+
+                // Lighthouse beam
+                ctx.save();
+                ctx.translate(parallaxX * 0.3, 0);
+                this.lightEngine.draw(ctx, lx, ly - 80, storm);
+                ctx.restore();
+
+                // Ocean (front layer overlay for depth)
+                ctx.save();
+                ctx.translate(parallaxX * 0.8, 0);
+                ctx.fillStyle = `rgba(2, 8, 18, ${0.2 + storm * 0.2})`;
+                ctx.fillRect(0, horizon + 40, w, h - horizon);
+                ctx.restore();
+
+                // Vignette
+                const vig = ctx.createRadialGradient(w/2, h/2, h*0.3, w/2, h/2, h*0.8);
+                vig.addColorStop(0, 'rgba(0,0,0,0)');
+                vig.addColorStop(1, `rgba(0,0,0,${0.3 + Math.abs(storm) * 0.3})`);
+                ctx.fillStyle = vig;
+                ctx.fillRect(0, 0, w, h);
+            }
+        }
+
+        // ==================== INIT ====================
+        const app = new App();
